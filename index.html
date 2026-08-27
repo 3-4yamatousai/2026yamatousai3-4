@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VAMOS TACOS 注文管理システム</title>
+  <!-- Tailwind CSS (デザイン用) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Firebase (リアルタイムデータベース) SDK (v8互換モード) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen text-gray-800 font-sans">
+
+  <!-- ヘッダー -->
+  <header class="bg-orange-600 text-white p-4 shadow-md flex justify-between items-center">
+    <h1 class="text-xl font-bold cursor-pointer" onclick="showScreen('home')">🌮 VAMOS TACOS 注文システム</h1>
+    <span id="current-role" class="text-sm bg-orange-700 px-3 py-1 rounded-full hidden"></span>
+  </header>
+
+  <main class="max-w-3xl mx-auto p-4">
+
+    <!-- 1. ホーム画面 (モード選択 & 販売集計) -->
+    <div id="screen-home" class="space-y-6 text-center py-6">
+      <h2 class="text-2xl font-bold">画面を選択してください</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-md mx-auto">
+        <button onclick="enterRegister()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-8 rounded-2xl shadow-lg text-2xl transition">
+          🛒 レジ画面
+        </button>
+        <button onclick="enterKitchen()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-8 rounded-2xl shadow-lg text-2xl transition">
+          👨‍🍳 調理場画面
+        </button>
+      </div>
+
+      <!-- 累計販売個数表示エリア -->
+      <div class="mt-8 bg-white p-6 rounded-2xl shadow-md max-w-md mx-auto text-left space-y-3 border">
+        <div class="flex justify-between items-center border-b pb-2">
+          <h3 class="font-bold text-lg text-gray-700">📊 販売累計個数</h3>
+          <button onclick="resetStats()" class="text-xs bg-red-500 hover:bg-red-600 text-white font-bold px-3 py-1.5 rounded transition">
+            集計リセット
+          </button>
+        </div>
+        <div id="sales-stats" class="space-y-1 text-base">
+          <p>合計: <span id="stat-total" class="font-bold text-xl text-orange-600">0</span> 個</p>
+          <div class="text-sm text-gray-600 pl-2 space-y-0.5" id="stat-details">
+            <!-- 動的に生成 -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. レジ画面：注文入力 -->
+    <div id="screen-register" class="hidden space-y-6">
+      <h2 class="text-xl font-bold border-b-2 border-orange-500 pb-2">注文選択</h2>
+      
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="item-list">
+        <!-- JSで商品を動的生成 -->
+      </div>
+
+      <div class="flex justify-between items-center pt-4 border-t">
+        <div class="text-xl font-bold">合計: <span id="register-total-price" class="text-2xl text-orange-600">0</span> 円</div>
+        <button onclick="confirmOrder()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-8 py-4 rounded-xl text-xl shadow-lg">
+          注文確認 ➔
+        </button>
+      </div>
+    </div>
+
+    <!-- 3. レジ画面：注文確認モーダル -->
+    <div id="modal-confirm" class="fixed inset-0 bg-black/50 hidden flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+        <div class="flex justify-between items-center border-b pb-2">
+          <h3 class="text-xl font-bold">注文内容の確認</h3>
+          <span id="confirm-order-number" class="bg-orange-600 text-white text-lg font-bold px-3 py-1 rounded-full">#--</span>
+        </div>
+        <div id="confirm-details" class="space-y-2 text-lg"></div>
+        <div class="text-right text-xl font-bold text-orange-600 pt-2 border-t" id="confirm-total"></div>
+        <div class="flex justify-between pt-4">
+          <button onclick="closeConfirmModal()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold px-6 py-3 rounded-lg">
+            キャンセル
+          </button>
+          <button onclick="submitOrder()" class="bg-green-600 hover:bg-green-700 text-white font-bold px-6 py-3 rounded-lg text-lg">
+            注文確定
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. 完了通知メッセージ -->
+    <div id="modal-success" class="fixed inset-0 bg-black/50 hidden flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl p-8 max-w-sm w-full text-center space-y-4 shadow-2xl">
+        <div class="text-5xl">✅</div>
+        <h3 class="text-2xl font-bold text-green-600">注文が完了しました</h3>
+        <p class="text-xl font-bold text-gray-700">注文番号: <span id="success-order-number" class="text-orange-600 text-3xl font-extrabold">#--</span></p>
+      </div>
+    </div>
+
+    <!-- 5. 調理場画面 (注文ログ一覧) -->
+    <div id="screen-kitchen" class="hidden space-y-6">
+      <div class="flex justify-between items-center border-b-2 border-orange-500 pb-2">
+        <h2 class="text-xl font-bold">注文ログ（リアルタイム）</h2>
+        <span class="text-xs text-gray-500">※完了から5分後に自動消去</span>
+      </div>
+
+      <div id="kitchen-orders" class="space-y-4">
+        <!-- リアルタイムで注文カードが挿入されます -->
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    // --- 1. Firebaseの設定 & 初期化 ---
+    const firebaseConfig = {
+      apiKey: "AIzaSyCgP1u3CDV1pJ15jRVcIMQd_K2dhkJKg7I",
+      authDomain: "yamatousai3-4.firebaseapp.com",
+      projectId: "yamatousai3-4",
+      storageBucket: "yamatousai3-4.firebasestorage.app",
+      messagingSenderId: "660218630961",
+      appId: "1:660218630961:web:29c5b78260c16e44a29610",
+      measurementId: "G-H3M5XKKD0Y"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    // 商品データ定義
+    const PRODUCTS = [
+      { id: 'plain', name: 'プレーン', price: 300, icon: '🌮' },
+      { id: 'cheese', name: 'チーズ', price: 400, icon: '🧀' },
+      { id: 'avocado', name: 'アボカド', price: 400, icon: '🥑' }
+    ];
+
+    let orderQuantities = { plain: 0, cheese: 0, avocado: 0 };
+    let currentNextOrderNumber = 1; // 次の注文番号
+    let unsubscribeKitchen = null;
+    let unsubscribeStats = null;
+
+    // 初期起動時
+    window.addEventListener('DOMContentLoaded', () => {
+      listenToStats();
+    });
+
+    // --- 2. 画面遷移の制御 ---
+    function showScreen(screenId) {
+      document.getElementById('screen-home').classList.add('hidden');
+      document.getElementById('screen-register').classList.add('hidden');
+      document.getElementById('screen-kitchen').classList.add('hidden');
+      document.getElementById('current-role').classList.add('hidden');
+
+      if (screenId === 'home') {
+        document.getElementById('screen-home').classList.remove('hidden');
+        if(unsubscribeKitchen) unsubscribeKitchen();
+      } else if (screenId === 'register') {
+        document.getElementById('screen-register').classList.remove('hidden');
+        document.getElementById('current-role').classList.remove('hidden');
+        document.getElementById('current-role').textContent = 'レジモード';
+      } else if (screenId === 'kitchen') {
+        document.getElementById('screen-kitchen').classList.remove('hidden');
+        document.getElementById('current-role').classList.remove('hidden');
+        document.getElementById('current-role').textContent = '調理場モード';
+      }
+    }
+
+    function enterRegister() {
+      resetQuantities();
+      renderRegisterItems();
+      showScreen('register');
+    }
+
+    function enterKitchen() {
+      showScreen('kitchen');
+      listenToOrders();
+    }
+
+    // --- 3. ホーム画面：集計ロジック & 注文番号管理 ---
+    function listenToStats() {
+      if (unsubscribeStats) unsubscribeStats();
+
+      // 全注文データをリアルタイム監視して集計
+      unsubscribeStats = db.collection('orders').orderBy('timestamp', 'asc').onSnapshot(snapshot => {
+        let counts = { plain: 0, cheese: 0, avocado: 0 };
+        let totalCount = 0;
+        let currentPeriodOrderCount = snapshot.size;
+
+        snapshot.docs.forEach(orderDoc => {
+          const data = orderDoc.data();
+          if (data.items) {
+            PRODUCTS.forEach(p => {
+              const q = data.items[p.id] || 0;
+              counts[p.id] += q;
+              totalCount += q;
+            });
+          }
+        });
+
+        // 次の注文番号を決定
+        currentNextOrderNumber = currentPeriodOrderCount + 1;
+
+        // 画面に集計結果を反映
+        document.getElementById('stat-total').textContent = totalCount.toLocaleString();
+        const detailsHtml = PRODUCTS.map(p => `
+          <div>・ ${p.name}: <b>${counts[p.id] || 0}</b> 個</div>
+        `).join('');
+        document.getElementById('stat-details').innerHTML = detailsHtml;
+      });
+    }
+
+    // 集計および全注文ログをクリアする
+    async function resetStats() {
+      if (confirm('これまでのすべての注文データおよび調理場のログを削除し、集計・注文番号をリセットしますか？')) {
+        try {
+          // すべての注文ドキュメントを取得して削除
+          const snapshot = await db.collection('orders').get();
+          const batch = db.batch();
+          snapshot.docs.forEach(doc => {
+            batch.delete(doc.ref);
+          });
+          
+          // 古い形式の設定データもクリア
+          const statsDocRef = db.collection('system').doc('stats');
+          batch.delete(statsDocRef);
+
+          await batch.commit();
+          alert('すべての注文ログと集計データを消去しました。');
+        } catch (err) {
+          alert('データの消去に失敗しました。');
+          console.error(err);
+        }
+      }
+    }
+
+    // --- 4. レジ画面のロジック ---
+    function resetQuantities() {
+      orderQuantities = { plain: 0, cheese: 0, avocado: 0 };
+      updateRegisterTotal();
+    }
+
+    function renderRegisterItems() {
+      const container = document.getElementById('item-list');
+      container.innerHTML = PRODUCTS.map(item => `
+        <div class="bg-white p-5 rounded-2xl shadow-md border flex flex-col justify-between items-center space-y-4">
+          <div class="text-center">
+            <div class="text-4xl mb-1">${item.icon}</div>
+            <div class="text-xl font-bold">${item.name}</div>
+            <div class="text-gray-500 font-semibold">${item.price} 円</div>
+          </div>
+          <div class="flex items-center space-x-3 w-full justify-center">
+            <button onclick="changeQty('${item.id}', -1)" class="w-12 h-12 bg-gray-200 hover:bg-gray-300 rounded-full font-bold text-2xl text-gray-700 flex items-center justify-center shadow">-</button>
+            <span id="qty-${item.id}" class="text-2xl font-bold w-8 text-center">0</span>
+            <button onclick="changeQty('${item.id}', 1)" class="w-12 h-12 bg-orange-500 hover:bg-orange-600 rounded-full font-bold text-2xl text-white flex items-center justify-center shadow">+</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function changeQty(itemId, delta) {
+      const current = orderQuantities[itemId] || 0;
+      const next = Math.max(0, current + delta);
+      orderQuantities[itemId] = next;
+      document.getElementById(`qty-${itemId}`).textContent = next;
+      updateRegisterTotal();
+    }
+
+    function calculateTotal() {
+      return PRODUCTS.reduce((sum, item) => sum + (item.price * (orderQuantities[item.id] || 0)), 0);
+    }
+
+    function updateRegisterTotal() {
+      document.getElementById('register-total-price').textContent = calculateTotal().toLocaleString();
+    }
+
+    function confirmOrder() {
+      const totalCount = Object.values(orderQuantities).reduce((a, b) => a + b, 0);
+      if (totalCount === 0) {
+        alert('商品を1つ以上選択してください。');
+        return;
+      }
+
+      const detailsHtml = PRODUCTS.map(item => {
+        const qty = orderQuantities[item.id];
+        if (qty === 0) return '';
+        return `<div class="flex justify-between"><span>${item.name} × ${qty}</span><span>${(item.price * qty).toLocaleString()} 円</span></div>`;
+      }).join('');
+
+      document.getElementById('confirm-order-number').textContent = `#${currentNextOrderNumber}`;
+      document.getElementById('confirm-details').innerHTML = detailsHtml;
+      document.getElementById('confirm-total').textContent = `合計: ${calculateTotal().toLocaleString()} 円`;
+      document.getElementById('modal-confirm').classList.remove('hidden');
+    }
+
+    function closeConfirmModal() {
+      document.getElementById('modal-confirm').classList.add('hidden');
+    }
+
+    async function submitOrder() {
+      closeConfirmModal();
+
+      const orderNo = currentNextOrderNumber;
+      const orderData = {
+        orderNumber: orderNo,
+        items: { ...orderQuantities },
+        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+        createdAtStr: new Date().toLocaleTimeString('ja-JP', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        completed: false,
+        completedAt: null
+      };
+
+      try {
+        await db.collection('orders').add(orderData);
+        
+        document.getElementById('success-order-number').textContent = `#${orderNo}`;
+        const modalSuccess = document.getElementById('modal-success');
+        modalSuccess.classList.remove('hidden');
+        setTimeout(() => {
+          modalSuccess.classList.add('hidden');
+          enterRegister();
+        }, 2000);
+
+      } catch (err) {
+        alert('注文の送信に失敗しました。ネット接続またはFirestoreの設定を確認してください。');
+        console.error(err);
+      }
+    }
+
+    // --- 5. 調理場画面のロジック (リアルタイム同期) ---
+    function listenToOrders() {
+      if (unsubscribeKitchen) unsubscribeKitchen();
+
+      unsubscribeKitchen = db.collection('orders')
+        .orderBy('timestamp', 'asc')
+        .onSnapshot(snapshot => {
+          const container = document.getElementById('kitchen-orders');
+          const now = Date.now();
+
+          if (snapshot.empty) {
+            container.innerHTML = '<div class="text-center text-gray-400 py-12">現在注文はありません</div>';
+            return;
+          }
+
+          let html = '';
+          snapshot.docs.forEach(doc => {
+            const data = doc.data();
+            const id = doc.id;
+
+            // 調理完了チェックを入れてから5分経過したログは自動非表示
+            if (data.completed && data.completedAt) {
+              const completedTime = data.completedAt.toDate ? data.completedAt.toDate().getTime() : now;
+              if (now - completedTime > 5 * 60 * 1000) {
+                return;
+              }
+            }
+
+            const isDone = data.completed;
+            const cardBg = isDone ? 'bg-gray-100 border-gray-300 opacity-60' : 'bg-white border-orange-400 shadow-md';
+            const statusBadge = isDone 
+              ? '<span class="bg-gray-500 text-white text-xs px-2 py-1 rounded">調理済み</span>' 
+              : '<span class="bg-red-500 text-white text-xs px-2 py-1 font-bold rounded animate-pulse">未調理</span>';
+
+            const itemsText = PRODUCTS.map(p => {
+              const qty = data.items ? (data.items[p.id] || 0) : 0;
+              if (qty === 0) return null;
+              return `<span class="inline-block bg-orange-100 text-orange-900 px-3 py-1 rounded-lg text-lg font-bold mr-2 mb-1">${p.name}: ${qty}個</span>`;
+            }).filter(Boolean).join('');
+
+            const orderNumDisplay = data.orderNumber ? `#${data.orderNumber}` : '#--';
+
+            html += `
+              <div class="p-4 rounded-xl border-2 ${cardBg} flex items-center justify-between transition-all">
+                <div class="space-y-2">
+                  <div class="flex items-center space-x-3">
+                    <span class="bg-orange-600 text-white font-black text-lg px-2.5 py-0.5 rounded-lg shadow-sm">${orderNumDisplay}</span>
+                    <span class="text-sm font-mono text-gray-500">⏰ ${data.createdAtStr || '時刻情報なし'}</span>
+                    ${statusBadge}
+                  </div>
+                  <div>${itemsText}</div>
+                </div>
+                <div>
+                  <label class="flex items-center space-x-2 cursor-pointer bg-white px-4 py-3 rounded-lg border shadow-sm hover:bg-gray-50">
+                    <input type="checkbox" ${isDone ? 'checked' : ''} onchange="toggleOrderStatus('${id}', this.checked)" class="w-6 h-6 text-orange-600 rounded">
+                    <span class="font-bold text-sm">${isDone ? '完了済' : '調理完了'}</span>
+                  </label>
+                </div>
+              </div>
+            `;
+          });
+
+          container.innerHTML = html || '<div class="text-center text-gray-400 py-12">未調理の注文はありません</div>';
+        });
+    }
+
+    async function toggleOrderStatus(orderId, isChecked) {
+      try {
+        await db.collection('orders').doc(orderId).update({
+          completed: isChecked,
+          completedAt: isChecked ? firebase.firestore.FieldValue.serverTimestamp() : null
+        });
+      } catch (err) {
+        alert('ステータスの更新に失敗しました');
+        console.error(err);
+      }
+    }
+  </script>
+</body>
+</html>
